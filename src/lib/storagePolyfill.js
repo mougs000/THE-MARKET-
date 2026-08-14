@@ -1,9 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://nwzzzlcgjyiiebkfjdht.supabase.co/rest/v1/";
+const SUPABASE_URL = "https://nwzzzlcgjyiiebkfjdht.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_ZbCdr8qahVu6fFIyVNUZqg_OBy5fCg4";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+window.supabaseClient = supabase;
 
 window.storage = {
   async get(key, shared = false) {
