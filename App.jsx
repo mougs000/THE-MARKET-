@@ -306,6 +306,7 @@ export default function TheMarket() {
   const [messages, setMessages] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [settings, setSettings] = useState({ commissionRate: 0.01 });
+  const [support, setSupport] = useState([]);
   const [profile, setProfile] = useState(null);
   const [cart, setCart] = useState([]);
   const [query, setQuery] = useState("");
@@ -330,7 +331,7 @@ export default function TheMarket() {
     if (!session) { setReady(false); return; }
     const userId = session.user.id;
     (async () => {
-      const [p, o, m, r, s, prof, c] = await Promise.all([
+      const [p, o, m, r, s, prof, c, sup] = await Promise.all([
         loadShared("products", null),
         loadShared("orders", []),
         loadShared("messages", []),
@@ -338,10 +339,11 @@ export default function TheMarket() {
         loadShared("settings", { commissionRate: 0.01 }),
         loadPersonal(`profile:${userId}`, null),
         loadPersonal(`cart:${userId}`, []),
+        loadShared("support", []),
       ]);
       if (!p) { setProducts(SEED_PRODUCTS); await saveShared("products", SEED_PRODUCTS); }
       else setProducts(p);
-      setOrders(o); setMessages(m); setReviews(r); setSettings(s);
+      setOrders(o); setMessages(m); setReviews(r); setSettings(s); setSupport(sup);
       setProfile(prof ? { ...prof, email: session.user.email } : prof); setCart(c);
       setReady(true);
     })();
@@ -352,6 +354,11 @@ export default function TheMarket() {
   const persistMessages = async (next) => { setMessages(next); await saveShared("messages", next); };
   const persistReviews = async (next) => { setReviews(next); await saveShared("reviews", next); };
   const persistSettings = async (next) => { setSettings(next); await saveShared("settings", next); };
+  const persistSupport = async (next) => { setSupport(next); await saveShared("support", next); };
+  const sendSupportMessage = async (text, from = "user", targetUserId = null) => {
+    const msg = { id: uid(), userId: targetUserId || session.user.id, userName: profile?.name || session.user.email, from, text, createdAt: Date.now() };
+    await persistSupport([...support, msg]);
+  };
   const persistCart = async (next) => { setCart(next); await savePersonal(`cart:${session.user.id}`, next); };
 
   const saveProfile = async (p) => { setProfile(p); await savePersonal(`profile:${session.user.id}`, p); };
@@ -542,13 +549,14 @@ export default function TheMarket() {
         {tab === "account" && (
           <AccountView profile={profile} nameInput={nameInput} setNameInput={setNameInput}
             onSave={saveProfile} messages={messages} products={products} respondOffer={respondOffer}
-            onShowAdmin={() => setShowAdmin(true)} email={session.user.email} onLogOut={logOut} />
+            onShowAdmin={() => setShowAdmin(true)} email={session.user.email} onLogOut={logOut}
+            support={support.filter(s => s.userId === session.user.id)} onSendSupport={sendSupportMessage} />
         )}
       </div>
 
       {showAdmin && (
         <AdminModal onClose={() => setShowAdmin(false)} products={products} orders={orders} settings={settings}
-          onSaveSettings={persistSettings} />
+          onSaveSettings={persistSettings} support={support} onSendSupport={sendSupportMessage} />
       )}
 
       {toast && (
@@ -829,10 +837,37 @@ function SellView({ onPublish, profile, onNeedProfile }) {
   const [d, setD] = useState({
     title: "", description: "", category: "other", condition: "New", price: "", currency: "NAD",
     qty: 1, location: "", country: "Namibia", delivery: false, deliveryFee: "", offerEnabled: false,
-    color: "#0E4A47", icon: "📦", images: [], imageUrlInput: "", videoUrl: "",
+    color: "#0E4A47", icon: "📦", images: [], videoUrl: "",
   });
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = React.useRef(null);
   const iconChoices = ["📦", "🚗", "📱", "💻", "🛋️", "🧱", "⚙️", "👕", "🥑", "🧸", "🏀", "🔧"];
   const colorChoices = ["#0E4A47", "#14150F", "#B4442E", "#D8FF4F", "#4C5B61"];
+
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      const client = window.supabaseClient;
+      const slots = Math.max(0, 6 - d.images.length);
+      const newUrls = [];
+      for (const file of files.slice(0, slots)) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
+        const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+        const { error } = await client.storage.from("product-images").upload(path, file);
+        if (error) { console.error(error); continue; }
+        const { data } = client.storage.from("product-images").getPublicUrl(path);
+        newUrls.push(data.publicUrl);
+      }
+      setD(prev => ({ ...prev, images: [...prev.images, ...newUrls] }));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   if (!profile) {
     return (
@@ -910,15 +945,13 @@ function SellView({ onPublish, profile, onNeedProfile }) {
             </Field></div>
           </div>
 
-          <Field label="Photos (image URLs)">
-            <div className="flex gap-2 mb-2">
-              <input className={inputCls} style={inputStyle} value={d.imageUrlInput} onChange={e => setD({ ...d, imageUrlInput: e.target.value })} placeholder="https://…" />
-              <Btn small variant="ghost" onClick={() => {
-                if (d.imageUrlInput.trim() && d.images.length < 6) { setD({ ...d, images: [...d.images, d.imageUrlInput.trim()], imageUrlInput: "" }); }
-              }}>Add</Btn>
-            </div>
+          <Field label="Photos">
+            <input ref={fileInputRef} type="file" accept="image/*" multiple capture="environment" className="hidden" onChange={handleFileUpload} />
+            <Btn small variant="ghost" disabled={uploading || d.images.length >= 6} onClick={() => fileInputRef.current?.click()}>
+              {uploading ? "Uploading…" : "📷 Choose photos"}
+            </Btn>
             {d.images.length > 0 && (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 mt-2">
                 {d.images.map((src, i) => (
                   <div key={i} className="relative">
                     <img src={src} alt="" className="w-14 h-14 object-cover rounded-lg" style={{ border: `1px solid ${COLORS.line}` }}
@@ -930,7 +963,7 @@ function SellView({ onPublish, profile, onNeedProfile }) {
                 ))}
               </div>
             )}
-            <div className="text-[11px] opacity-45 mt-1">Paste a hosted image link for each photo (up to 6). A production build uploads directly from the camera roll to cloud storage — see the architecture doc.</div>
+            <div className="text-[11px] opacity-45 mt-1">Up to 6 photos, uploaded straight from your device.</div>
           </Field>
 
           <Field label="Product video (optional)">
@@ -1011,8 +1044,7 @@ function SellView({ onPublish, profile, onNeedProfile }) {
         {step < steps.length - 1 && <Btn full variant="lime" disabled={!canNext[step]} onClick={() => setStep(step + 1)}>Continue</Btn>}
         {step === steps.length - 1 && (
           <Btn full variant="lime" onClick={() => {
-            const { imageUrlInput, ...clean } = d;
-            onPublish({ ...clean, price: Number(d.price), deliveryFee: Number(d.deliveryFee) || 0, qty: Number(d.qty) || 1 });
+            onPublish({ ...d, price: Number(d.price), deliveryFee: Number(d.deliveryFee) || 0, qty: Number(d.qty) || 1 });
           }}>
             Publish listing
           </Btn>
@@ -1128,8 +1160,9 @@ function OrdersView({ buyerOrders, sellerOrders, onAdvance, onReview, reviews, p
 }
 
 /* ---------------- ACCOUNT ---------------- */
-function AccountView({ profile, nameInput, setNameInput, onSave, messages, products, respondOffer, onShowAdmin, email, onLogOut }) {
+function AccountView({ profile, nameInput, setNameInput, onSave, messages, products, respondOffer, onShowAdmin, email, onLogOut, support, onSendSupport }) {
   const myOfferMsgs = messages.filter(m => m.type === "offer" && m.to === profile?.name);
+  const [supportText, setSupportText] = useState("");
   return (
     <div>
       {!profile ? (
@@ -1201,6 +1234,24 @@ function AccountView({ profile, nameInput, setNameInput, onSave, messages, produ
             </>
           )}
 
+          <SectionTitle>Help & support</SectionTitle>
+          <div className="p-3 rounded-xl mb-2" style={{ background: "#fff", border: `1px solid ${COLORS.line}` }}>
+            {support.length === 0 && <div className="text-xs opacity-45 mb-2">Have a question or ran into a problem? Message THE MARKET team directly.</div>}
+            <div className="space-y-2 mb-2 max-h-48 overflow-y-auto">
+              {support.map(m => (
+                <div key={m.id} className={`p-2 rounded-lg text-xs ${m.from === "admin" ? "" : ""}`}
+                  style={{ background: m.from === "admin" ? COLORS.paper2 : "#fff", border: `1px solid ${COLORS.line}` }}>
+                  <div className="font-semibold">{m.from === "admin" ? "THE MARKET support" : "You"}</div>
+                  <div>{m.text}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input className={inputCls} style={inputStyle} value={supportText} onChange={e => setSupportText(e.target.value)} placeholder="Message support…" />
+              <Btn small onClick={() => { if (supportText.trim()) { onSendSupport(supportText.trim()); setSupportText(""); } }}>Send</Btn>
+            </div>
+          </div>
+
           <SectionTitle>Platform</SectionTitle>
           <Btn variant="ghost" full onClick={onShowAdmin}>Open admin dashboard</Btn>
           <div className="mt-2"><Btn variant="outline" full onClick={onLogOut}>Log out</Btn></div>
@@ -1211,12 +1262,16 @@ function AccountView({ profile, nameInput, setNameInput, onSave, messages, produ
 }
 
 /* ---------------- ADMIN ---------------- */
-function AdminModal({ onClose, products, orders, settings, onSaveSettings }) {
+function AdminModal({ onClose, products, orders, settings, onSaveSettings, support, onSendSupport }) {
   const [rate, setRate] = useState((settings.commissionRate * 100).toString());
+  const [replyText, setReplyText] = useState({});
   const totalGMV = orders.reduce((s, o) => s + o.subtotal, 0);
   const totalCommission = orders.reduce((s, o) => s + o.commission, 0);
   const sellers = new Set(products.map(p => p.seller)).size;
   const byCategory = CATEGORIES.map(c => ({ ...c, count: products.filter(p => p.category === c.id).length })).sort((a, b) => b.count - a.count).slice(0, 5);
+  const threads = {};
+  support.forEach(m => { (threads[m.userId] = threads[m.userId] || []).push(m); });
+  const openThreads = Object.entries(threads);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end" style={{ background: "#00000066" }}>
@@ -1265,6 +1320,27 @@ function AdminModal({ onClose, products, orders, settings, onSaveSettings }) {
           ))}
         </div>
         <div className="text-[11px] opacity-45">Demo rule set only — a production compliance engine needs country-specific legal review before each market launch (spec section 9).</div>
+
+        <SectionTitle>Support inbox</SectionTitle>
+        {openThreads.length === 0 && <div className="text-xs opacity-45 mb-2">No support messages yet.</div>}
+        <div className="space-y-3 mb-2">
+          {openThreads.map(([userId, msgs]) => (
+            <div key={userId} className="p-2 rounded-lg" style={{ background: "#fff", border: `1px solid ${COLORS.line}` }}>
+              <div className="text-xs font-semibold mb-1">{msgs[msgs.length - 1].userName}</div>
+              <div className="space-y-1 mb-2">
+                {msgs.map(m => (
+                  <div key={m.id} className="text-xs p-1.5 rounded" style={{ background: m.from === "admin" ? COLORS.paper2 : COLORS.paper }}>
+                    <span className="font-semibold">{m.from === "admin" ? "You: " : ""}</span>{m.text}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input className={inputCls} style={inputStyle} value={replyText[userId] || ""} onChange={e => setReplyText({ ...replyText, [userId]: e.target.value })} placeholder="Reply…" />
+                <Btn small variant="lime" onClick={() => { if (replyText[userId]?.trim()) { onSendSupport(replyText[userId].trim(), "admin", userId); setReplyText({ ...replyText, [userId]: "" }); } }}>Reply</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
