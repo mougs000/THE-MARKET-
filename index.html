@@ -6,20 +6,11 @@
     <meta name="theme-color" content="#14150F" />
     <title>THE MARKET — Buy Direct. Sell Direct.</title>
     <meta name="description" content="A direct supplier-to-buyer marketplace. No unnecessary middlemen." />
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>eruda.init();</script>
   </head>
   <body>
     <div id="root"></div>
-    <div id="error-log" style="font-family: monospace; font-size: 12px; color: red; white-space: pre-wrap; padding: 12px;"></div>
-    <script>
-      window.addEventListener('error', function (e) {
-        var el = document.getElementById('error-log');
-        if (el) el.textContent += 'ERROR: ' + e.message + ' (' + e.filename + ':' + e.lineno + ')\n';
-      });
-      window.addEventListener('unhandledrejection', function (e) {
-        var el = document.getElementById('error-log');
-        if (el) el.textContent += 'PROMISE REJECTION: ' + (e.reason && e.reason.message ? e.reason.message : e.reason) + '\n';
-      });
-    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
