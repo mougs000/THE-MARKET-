@@ -1,33 +1,40 @@
-const PREFIX = "the-market:";
+import { createClient } from "@supabase/supabase-js";
 
-function readRaw(key) {
-  return localStorage.getItem(PREFIX + key);
-}
+const SUPABASE_URL = "PASTE_YOUR_PROJECT_URL_HERE";
+const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_KEY_HERE";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 window.storage = {
   async get(key, shared = false) {
-    const raw = readRaw(key);
-    if (raw === null) return null;
-    return { key, value: raw, shared };
+    const { data, error } = await supabase
+      .from("kv_store")
+      .select("value")
+      .eq("key", key)
+      .maybeSingle();
+    if (error || !data) return null;
+    return { key, value: data.value, shared };
   },
 
   async set(key, value, shared = false) {
-    localStorage.setItem(PREFIX + key, value);
+    const { error } = await supabase
+      .from("kv_store")
+      .upsert({ key, value, shared });
+    if (error) throw error;
     return { key, value, shared };
   },
 
   async delete(key, shared = false) {
-    const existed = readRaw(key) !== null;
-    localStorage.removeItem(PREFIX + key);
-    return { key, deleted: existed, shared };
+    const { error } = await supabase.from("kv_store").delete().eq("key", key);
+    return { key, deleted: !error, shared };
   },
 
   async list(prefix = "", shared = false) {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(PREFIX + prefix)) keys.push(k.slice(PREFIX.length));
-    }
-    return { keys, prefix, shared };
+    const { data, error } = await supabase
+      .from("kv_store")
+      .select("key")
+      .like("key", `${prefix}%`);
+    if (error) return { keys: [], prefix, shared };
+    return { keys: data.map((d) => d.key), prefix, shared };
   },
 };
